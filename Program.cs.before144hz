@@ -1,0 +1,431 @@
+﻿using System.Diagnostics;
+using System.Drawing;
+using System.Windows.Forms;
+using TEST_1.Data;
+
+namespace TEST_1;
+
+internal static class Program
+{
+    [STAThread]
+    private static void Main()
+    {
+        try
+        {
+            ApplicationConfiguration.Initialize();
+            using var overlay = new OverlayForm();
+            using var mainForm = new MainForm(overlay);
+            Application.Run(mainForm);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.ToString(), "TEST 1 Startup Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}
+
+internal sealed class MainForm : Form
+{
+    private const int BackgroundColor = 0x111318;
+    private const int PanelColor = 0x191C22;
+    private const int PanelColor2 = 0x20242C;
+    private const int BorderColor = 0x303640;
+    private const int TextColor = 0xE8EBF0;
+    private const int MutedTextColor = 0x9299A6;
+    private const int GreenColor = 0x43D17A;
+    private const int RedColor = 0xF05D63;
+    private const int BlueColor = 0x4D8DFF;
+
+    private readonly OverlayForm _overlay;
+    private readonly DesktopCapture _capture = new();
+    private readonly SafeInputController _input = new();
+    private ScreenPoseAnalyzer? _analyzer;
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 80 };
+    private readonly Stopwatch _fpsWatch = Stopwatch.StartNew();
+
+    private Label _statusLabel = null!;
+    private Label _modelLabel = null!;
+    private Label _fpsLabel = null!;
+    private Label _framesLabel = null!;
+    private Label _detectionsLabel = null!;
+    private Label _confidenceLabel = null!;
+    private Label _centerLabel = null!;
+    private Label _boxLabel = null!;
+    private Label _trackingLabel = null!;
+    private Label _reportLabel = null!;
+    private Label _inputLabel = null!;
+    private PictureBox _preview = null!;
+    private NumericUpDown _testX = null!;
+    private NumericUpDown _testY = null!;
+    private Button _startButton = null!;
+
+    private long _frames;
+    private long _detections;
+    private int _fpsFrames;
+    private bool _running;
+    private CancellationTokenSource? _analysisCts;
+    private Task? _analysisTask;
+    private DesktopFrame? _latestFrame;
+    private CharacterAnalysisResult? _latestResult;
+    private Exception? _backgroundError;
+    private long _analysisFrames;
+
+    public MainForm(OverlayForm overlay)
+    {
+        _overlay = overlay;
+        InitializeForm();
+        _input.HotkeyTriggered += Input_HotkeyTriggered;
+        _input.EmergencyStopTriggered += Input_EmergencyStopTriggered;
+        _timer.Tick += Timer_Tick;
+        UpdateInputState();
+    }
+
+    private static Color Rgb(int hex) =>
+        Color.FromArgb((hex >> 16) & 255, (hex >> 8) & 255, hex & 255);
+
+    private void InitializeForm()
+    {
+        Text = "TEST 1 â€” Screen Character / Pose Analyzer";
+        StartPosition = FormStartPosition.CenterScreen;
+        MinimumSize = new Size(980, 700);
+        Size = new Size(1180, 780);
+        BackColor = Rgb(BackgroundColor);
+        ForeColor = Rgb(TextColor);
+        Font = new Font("Segoe UI", 9f);
+
+        var root = new TableLayoutPanel {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            Padding = new Padding(14), BackColor = Rgb(BackgroundColor)
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 315));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        Controls.Add(root);
+
+        root.Controls.Add(BuildSidebar(), 0, 0);
+        root.Controls.Add(BuildPreviewPanel(), 1, 0);
+    }
+
+    private Control BuildSidebar()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Rgb(PanelColor), Padding = new Padding(16) };
+        var y = 12;
+
+        AddLabel(panel, "SCREEN POSE ANALYZER", 16, y, 280, 30, 12, FontStyle.Bold, Rgb(BlueColor));
+        y += 42;
+        _statusLabel = AddLabel(panel, "IDLE", 16, y, 280, 30, 18, FontStyle.Bold, Rgb(MutedTextColor));
+        y += 42;
+        _modelLabel = AddLabel(panel, "Model: not loaded", 16, y, 280, 38, 9, FontStyle.Regular, Rgb(MutedTextColor));
+        y += 48;
+
+        AddSeparator(panel, y); y += 16;
+        AddLabel(panel, "DETECTION", 16, y, 280, 22, 9, FontStyle.Bold, Rgb(MutedTextColor)); y += 28;
+        _confidenceLabel = AddLabel(panel, "Confidence: â€”", 16, y, 280, 24, 10, FontStyle.Regular, Rgb(TextColor)); y += 26;
+        _centerLabel = AddLabel(panel, "Center: â€”", 16, y, 280, 24, 10, FontStyle.Regular, Rgb(TextColor)); y += 26;
+        _boxLabel = AddLabel(panel, "Box: â€”", 16, y, 280, 40, 9, FontStyle.Regular, Rgb(MutedTextColor)); y += 48;
+        _trackingLabel = AddLabel(panel, "Tracking: idle", 16, y, 280, 24, 10, FontStyle.Regular, Rgb(MutedTextColor)); y += 34;
+
+        AddSeparator(panel, y); y += 16;
+        AddLabel(panel, "ANALYSIS", 16, y, 280, 22, 9, FontStyle.Bold, Rgb(MutedTextColor)); y += 28;
+        _fpsLabel = AddLabel(panel, "FPS: 0.0", 16, y, 135, 24, 10, FontStyle.Regular, Rgb(TextColor));
+        _framesLabel = AddLabel(panel, "Frames: 0", 155, y, 135, 24, 10, FontStyle.Regular, Rgb(TextColor)); y += 26;
+        _detectionsLabel = AddLabel(panel, "Confirmed: 0", 16, y, 135, 24, 10, FontStyle.Regular, Rgb(TextColor));
+        _reportLabel = AddLabel(panel, "Report: â€”", 155, y, 135, 24, 9, FontStyle.Regular, Rgb(MutedTextColor)); y += 36;
+
+        AddSeparator(panel, y); y += 16;
+        AddLabel(panel, "INPUT TEST HARNESS", 16, y, 280, 22, 9, FontStyle.Bold, Rgb(MutedTextColor)); y += 30;
+
+        _testX = new NumericUpDown { Left = 16, Top = y, Width = 125, Minimum = 0, Maximum = 10000, Value = 500 };
+        _testY = new NumericUpDown { Left = 151, Top = y, Width = 125, Minimum = 0, Maximum = 10000, Value = 400 };
+        panel.Controls.Add(_testX); panel.Controls.Add(_testY); y += 38;
+
+        var move = MakeButton("Test Move", y, MoveToTestPoint);
+        var click = MakeButton("Test Click", y, ClickTestPoint);
+        move.Left = 16; click.Left = 151; panel.Controls.Add(move); panel.Controls.Add(click); y += 42;
+
+        _startButton = MakeButton("START ANALYSIS", y, StartAnalysis);
+        _startButton.Left = 16; _startButton.Width = 260; panel.Controls.Add(_startButton); y += 42;
+
+        var stop = MakeButton("STOP", y, StopAnalysis);
+        stop.Left = 16; stop.Width = 125; panel.Controls.Add(stop);
+        var diag = MakeButton("DIAGNOSTICS", y, ShowDiagnostics);
+        diag.Left = 151; diag.Width = 125; panel.Controls.Add(diag); y += 42;
+
+        var disable = MakeButton("DISABLE INPUT", y, DisableAutomation);
+        disable.Left = 16; disable.Width = 260; panel.Controls.Add(disable); y += 42;
+
+        _inputLabel = AddLabel(panel, "Input: disabled", 16, y, 260, 24, 9, FontStyle.Regular, Rgb(MutedTextColor));
+
+        return panel;
+    }
+
+    private Control BuildPreviewPanel()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Rgb(PanelColor2), Padding = new Padding(12) };
+        _preview = new PictureBox { Dock = DockStyle.Fill, BackColor = Color.Black, SizeMode = PictureBoxSizeMode.Zoom };
+        panel.Controls.Add(_preview);
+        return panel;
+    }
+
+    private static Label AddLabel(Control parent, string text, int left, int top, int width, int height,
+        float size, FontStyle style, Color color)
+    {
+        var label = new Label {
+            Text = text, Left = left, Top = top, Width = width, Height = height,
+            ForeColor = color, BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", size, style)
+        };
+        parent.Controls.Add(label);
+        return label;
+    }
+
+    private static void AddSeparator(Control parent, int top)
+    {
+        parent.Controls.Add(new Label {
+            Left = 16, Top = top, Width = 260, Height = 1,
+            BackColor = Color.FromArgb(48, 54, 64)
+        });
+    }
+
+    private Button MakeButton(string text, int top, Action action)
+    {
+        var b = new Button {
+            Text = text, Top = top, Width = 125, Height = 32,
+            FlatStyle = FlatStyle.Flat, BackColor = Rgb(PanelColor2), ForeColor = Rgb(TextColor)
+        };
+        b.FlatAppearance.BorderColor = Rgb(BorderColor);
+        b.Click += (_, _) => action();
+        return b;
+    }
+
+    private void StartAnalysis()
+    {
+        if (_running) return;
+
+        try
+        {
+            _analyzer?.Dispose();
+            _analyzer = ScreenPoseAnalyzer.CreateDefault();
+
+            _backgroundError = null;
+            _latestFrame = null;
+            _latestResult = null;
+            Interlocked.Exchange(ref _analysisFrames, 0);
+
+            _modelLabel.Text = "Model: YOLOv8n-pose / ONNX / GPU-first";
+            _statusLabel.Text = "RUNNING";
+            _statusLabel.ForeColor = Rgb(GreenColor);
+            _running = true;
+            _fpsWatch.Restart();
+
+            _analysisCts = new CancellationTokenSource();
+            _analysisTask = Task.Run(() => AnalysisLoopAsync(_analysisCts.Token));
+            _timer.Start();
+        }
+        catch (Exception ex)
+        {
+            _running = false;
+            _statusLabel.Text = "MODEL ERROR";
+            _statusLabel.ForeColor = Rgb(RedColor);
+            _reportLabel.Text = ex.Message;
+            MessageBox.Show(this, ex.Message, "Model Initialization",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void StopAnalysis()
+    {
+        _running = false;
+        _timer.Stop();
+
+        try { _analysisCts?.Cancel(); } catch { }
+        _analysisCts = null;
+        _analysisTask = null;
+
+        _overlay.ClearBoxes();
+        _statusLabel.Text = "STOPPED";
+        _statusLabel.ForeColor = Rgb(MutedTextColor);
+        _trackingLabel.Text = "Tracking: idle";
+    }
+
+    private async Task AnalysisLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                var frame = _capture.Capture();
+                var result = _analyzer?.Analyze(frame);
+
+                if (result is not null)
+                {
+                    _latestFrame = frame;
+                    _latestResult = result;
+                    Interlocked.Increment(ref _analysisFrames);
+                }
+
+                await Task.Delay(1, token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _backgroundError = ex;
+        }
+    }
+
+    private void Timer_Tick(object? sender, EventArgs e)
+    {
+        if (!_running) return;
+
+        try
+        {
+            if (_backgroundError is not null)
+            {
+                var ex = _backgroundError;
+                _backgroundError = null;
+                StopAnalysis();
+                _statusLabel.Text = "ERROR";
+                _statusLabel.ForeColor = Rgb(RedColor);
+                MessageBox.Show(this, ex.Message, "Screen Analysis Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            var frame = _latestFrame;
+            var result = _latestResult;
+
+            if (frame is null || result is null)
+                return;
+
+            _frames++;
+            _fpsFrames++;
+            _framesLabel.Text = $"Frames: {_frames}";
+            _reportLabel.Text = result.Report.Status;
+
+            if (result.Match is not null)
+            {
+                _detections++;
+                _detectionsLabel.Text = $"Confirmed: {_detections}";
+                _confidenceLabel.Text = "Detection: locked";
+                _centerLabel.Text = $"Center: ({result.Match.Center.X}, {result.Match.Center.Y})";
+                _boxLabel.Text = $"Box: {result.Match.Bounds.X},{result.Match.Bounds.Y}  {result.Match.Bounds.Width}x{result.Match.Bounds.Height}";
+                _trackingLabel.Text = $"Tracking: {result.Match.TrackingState}";
+                _overlay.SetCharacter(result.Match);
+            }
+            else
+            {
+                _confidenceLabel.Text = "Detection: searching";
+                _centerLabel.Text = "Center: â€”";
+                _boxLabel.Text = "Box: â€”";
+                _trackingLabel.Text = $"Tracking: {result.Report.Status}";
+                _overlay.ClearBoxes();
+            }
+
+            var preview = CreatePreviewBitmap(frame);
+            var old = _preview.Image;
+            _preview.Image = preview;
+            old?.Dispose();
+
+            if (_fpsWatch.ElapsedMilliseconds >= 1000)
+            {
+                var analyzed = Interlocked.Exchange(ref _analysisFrames, 0);
+                _fpsLabel.Text = $"FPS: {analyzed / _fpsWatch.Elapsed.TotalSeconds:F1}";
+                _fpsWatch.Restart();
+            }
+        }
+        catch (Exception ex)
+        {
+            StopAnalysis();
+            _statusLabel.Text = "ERROR";
+            _statusLabel.ForeColor = Rgb(RedColor);
+            MessageBox.Show(this, ex.Message, "Screen Analysis Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private static Bitmap CreatePreviewBitmap(DesktopFrame frame)
+    {
+        var bitmap = new Bitmap(frame.Width, frame.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var rect = new Rectangle(0, 0, frame.Width, frame.Height);
+        var data = bitmap.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(frame.Pixels, 0, data.Scan0,
+                Math.Min(frame.Pixels.Length, Math.Abs(data.Stride) * frame.Height));
+        }
+        finally { bitmap.UnlockBits(data); }
+        return bitmap;
+    }
+
+    private void MoveToTestPoint()
+    {
+        _input.Enable();
+        _input.MoveTo(new Point((int)_testX.Value, (int)_testY.Value));
+        UpdateInputState();
+    }
+
+    private void ClickTestPoint()
+    {
+        _input.Enable();
+        _input.ClickAt(new Point((int)_testX.Value, (int)_testY.Value));
+        UpdateInputState();
+    }
+
+    private void DisableAutomation()
+    {
+        _input.Disable();
+        UpdateInputState();
+    }
+
+    private void UpdateInputState() => _inputLabel.Text = "Input: manual test only";
+
+    private void Input_HotkeyTriggered()
+    {
+        if (!IsDisposed) BeginInvoke(new Action(MoveToTestPoint));
+    }
+
+    private void Input_EmergencyStopTriggered()
+    {
+        if (!IsDisposed) BeginInvoke(new Action(DisableAutomation));
+    }
+
+    private void ShowDiagnostics()
+    {
+        var modelPath = Path.Combine(AppContext.BaseDirectory, "Models", ScreenPoseAnalyzer.ModelFileName);
+        MessageBox.Show(this,
+            $"Model: {modelPath}\r\nExists: {File.Exists(modelPath)}\r\n" +
+            $"Frames: {_frames}\r\nConfirmed detections: {_detections}\r\n\r\n" +
+            "Detection never controls input.",
+            "Diagnostics", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        _input.RegisterHotkeys(Handle);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (_input.HandleWindowsMessage(ref m)) return;
+        base.WndProc(ref m);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        StopAnalysis();
+        _timer.Dispose();
+        _analyzer?.Dispose();
+        _capture.Dispose();
+        _input.Disable();
+        _input.UnregisterHotkeys();
+        _overlay.Close();
+        _preview.Image?.Dispose();
+        base.OnFormClosed(e);
+    }
+}
+
+

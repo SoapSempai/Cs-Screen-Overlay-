@@ -1,0 +1,133 @@
+using System.Drawing.Drawing2D;
+using TEST_1.Data;
+
+namespace TEST_1;
+
+internal sealed class OverlayForm : Form
+{
+    private CharacterMatch? _match;
+
+    public OverlayForm()
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.Lime;
+        TransparencyKey = Color.Lime;
+        Opacity = 0.95;
+        Bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 800, 600);
+
+        SetStyle(
+            ControlStyles.UserPaint |
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer,
+            true);
+    }
+
+    protected override bool ShowWithoutActivation => true;
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            const int WS_EX_TRANSPARENT = 0x20;
+            const int WS_EX_LAYERED = 0x80000;
+            const int WS_EX_NOACTIVATE = 0x8000000;
+            const int WS_EX_TOOLWINDOW = 0x80;
+
+            var cp = base.CreateParams;
+            cp.ExStyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+            return cp;
+        }
+    }
+
+    public void SetCharacter(CharacterMatch match)
+    {
+        _match = match;
+        UpdateOverlayBounds();
+        Invalidate();
+    }
+
+    public void ClearBoxes()
+    {
+        _match = null;
+        Invalidate();
+    }
+
+    private void UpdateOverlayBounds()
+    {
+        Bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? Bounds;
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        e.Graphics.Clear(TransparencyKey);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+
+        if (_match is null)
+            return;
+
+        using var boxPen = new Pen(Color.Red, 3f);
+        using var skeletonPen = new Pen(Color.DeepSkyBlue, 3f)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round
+        };
+        using var jointBrush = new SolidBrush(Color.White);
+        using var headPen = new Pen(Color.Gold, 2.5f);
+
+        var r = _match.Bounds;
+        e.Graphics.DrawRectangle(boxPen, r);
+
+        var headRadius = Math.Max(5, Math.Min(r.Width, r.Height) / 10);
+        e.Graphics.DrawEllipse(
+            headPen,
+            _match.Head.X - headRadius,
+            _match.Head.Y - headRadius,
+            headRadius * 2,
+            headRadius * 2);
+
+        DrawLine(e.Graphics, skeletonPen, _match.Head, _match.Neck);
+        DrawLine(e.Graphics, skeletonPen, _match.Neck, _match.LeftShoulder);
+        DrawLine(e.Graphics, skeletonPen, _match.LeftShoulder, _match.LeftElbow);
+        DrawLine(e.Graphics, skeletonPen, _match.LeftElbow, _match.LeftHand);
+        DrawLine(e.Graphics, skeletonPen, _match.Neck, _match.RightShoulder);
+        DrawLine(e.Graphics, skeletonPen, _match.RightShoulder, _match.RightElbow);
+        DrawLine(e.Graphics, skeletonPen, _match.RightElbow, _match.RightHand);
+        DrawLine(e.Graphics, skeletonPen, _match.Neck, _match.Chest);
+        DrawLine(e.Graphics, skeletonPen, _match.Chest, _match.Pelvis);
+        DrawLine(e.Graphics, skeletonPen, _match.Pelvis, _match.LeftHip);
+        DrawLine(e.Graphics, skeletonPen, _match.LeftHip, _match.LeftKnee);
+        DrawLine(e.Graphics, skeletonPen, _match.LeftKnee, _match.LeftFoot);
+        DrawLine(e.Graphics, skeletonPen, _match.Pelvis, _match.RightHip);
+        DrawLine(e.Graphics, skeletonPen, _match.RightHip, _match.RightKnee);
+        DrawLine(e.Graphics, skeletonPen, _match.RightKnee, _match.RightFoot);
+
+        DrawJoint(e.Graphics, jointBrush, _match.Neck);
+        DrawJoint(e.Graphics, jointBrush, _match.LeftElbow);
+        DrawJoint(e.Graphics, jointBrush, _match.RightElbow);
+        DrawJoint(e.Graphics, jointBrush, _match.LeftHand);
+        DrawJoint(e.Graphics, jointBrush, _match.RightHand);
+        DrawJoint(e.Graphics, jointBrush, _match.Pelvis);
+        DrawJoint(e.Graphics, jointBrush, _match.LeftKnee);
+        DrawJoint(e.Graphics, jointBrush, _match.RightKnee);
+
+        using var textBrush = new SolidBrush(Color.White);
+        using var font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold);
+        var text = $"{_match.ReferenceName}  {_match.Confidence:P0}";
+        e.Graphics.DrawString(text, font, textBrush, r.Left, Math.Max(0, r.Top - 22));
+    }
+
+    private static void DrawLine(Graphics g, Pen pen, Point a, Point b) => g.DrawLine(pen, a, b);
+
+    private static void DrawJoint(Graphics g, Brush brush, Point p)
+    {
+        const int radius = 4;
+        g.FillEllipse(brush, p.X - radius, p.Y - radius, radius * 2, radius * 2);
+    }
+}

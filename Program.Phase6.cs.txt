@@ -1,0 +1,16 @@
+// Phase 6 integration for the existing Program.Main.
+// Keep the existing protection and Phase 2B validation first; only create the host
+// after those checks have passed.
+
+using TEST_1.Core;
+using TEST_1.Services;
+
+using var host = ApplicationComposition.CreateDefaultHost();
+host.Start();
+
+var snapshot = host.CaptureSnapshot();
+Console.WriteLine($"Phase 6 source: {snapshot.Source}");
+Console.WriteLine($"Phase 6 sequence: {snapshot.Sequence}");
+Console.WriteLine($"Phase 6 health: {host.Health.Status}");
+
+host.Stop();

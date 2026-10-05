@@ -1,0 +1,269 @@
+using TEST_1.Core;
+using TEST_1.Data;
+using TEST_1.Services;
+using TEST_1.Diagnostics;
+using TEST_1.Protection;
+
+namespace TEST_1;
+
+internal static class Program
+{
+    private static int Main()
+    {
+        var protection =
+            ProtectionRuntime.ValidateConfiguration("appsettings.ini");
+
+        Console.WriteLine("=== TEST 1 Phase 4 Protection ===");
+        Console.WriteLine(protection.Message);
+
+        if (!protection.Passed)
+        {
+            Console.Error.WriteLine("Protected startup refused.");
+            return 2;
+        }
+
+        var result =
+            Phase2BDiagnostics.Run("appsettings.ini");
+
+        Console.WriteLine();
+        Console.WriteLine("=== TEST 1 Phase 2B Diagnostics ===");
+        Console.WriteLine();
+
+        Console.WriteLine(
+            RuntimeDiagnostics.ToText(result.Runtime));
+
+        Console.WriteLine();
+
+        Console.WriteLine(
+            $"Runtime compatible (x64): {result.RuntimeCompatible}");
+
+        Console.WriteLine(
+            $"Offset profile valid: {result.OffsetProfileValid}");
+
+        Console.WriteLine(
+            $"Offset values checked: {result.Offsets.CheckedValues}");
+
+        Console.WriteLine(
+            $"Offset validation: {result.Offsets.Message}");
+
+        Console.WriteLine();
+
+        Console.WriteLine(
+            $"Diagnostics enabled: {result.Configuration.DiagnosticsEnabled}");
+
+        Console.WriteLine(
+            $"Offset validation enabled: {result.Configuration.ValidateOffsetProfile}");
+
+        Console.WriteLine(
+            $"Log level: {result.Configuration.LogLevel}");
+
+        if (!result.RuntimeCompatible ||
+            !result.OffsetProfileValid)
+        {
+            return 1;
+        }
+
+        using (var host =
+            ApplicationComposition.CreateDefaultHost())
+        {
+            host.Start();
+
+            var snapshot = host.CaptureSnapshot();
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "=== TEST 1 Phase 6 Service Architecture ===");
+
+            Console.WriteLine(
+                $"Phase 6 source: {snapshot.Source}");
+
+            Console.WriteLine(
+                $"Phase 6 sequence: {snapshot.Sequence}");
+
+            Console.WriteLine(
+                $"Phase 6 health: {host.Health.Status}");
+
+            host.Stop();
+        }
+
+        var phase7 =
+            Phase7Diagnostics.Run();
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "=== TEST 1 Phase 7 Provider Architecture ===");
+
+        Console.WriteLine(
+            $"Phase 7 checks passed: {phase7.ChecksPassed}");
+
+        Console.WriteLine(
+            $"Phase 7 checks failed: {phase7.ChecksFailed}");
+
+        Console.WriteLine(
+            $"Phase 7 result: {phase7.Message}");
+
+        if (!phase7.Passed)
+            return 3;
+
+        var phase8 =
+            Phase8Validation.Run("appsettings.ini");
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "=== TEST 1 Phase 8 Release Validation ===");
+
+        Console.WriteLine(
+            $"Phase 8 checks passed: {phase8.ChecksPassed}");
+
+        Console.WriteLine(
+            $"Phase 8 checks failed: {phase8.ChecksFailed}");
+
+        Console.WriteLine(
+            $"Phase 8 result: {phase8.Message}");
+
+        if (!phase8.Passed)
+            return 4;
+
+        var phase9 =
+            Phase9Diagnostics.Run();
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "=== TEST 1 Phase 9 Passive Telemetry ===");
+
+        Console.WriteLine(
+            $"Phase 9 checks passed: {phase9.ChecksPassed}");
+
+        Console.WriteLine(
+            $"Phase 9 checks failed: {phase9.ChecksFailed}");
+
+        Console.WriteLine(
+            $"Phase 9 result: {phase9.Message}");
+
+        if (!phase9.Passed)
+            return 5;
+
+        var phase11A =
+            Phase11ADiagnostics.Run();
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "=== TEST 1 Phase 11A Telemetry Schema ===");
+
+        Console.WriteLine(
+            $"Phase 11A checks passed: {phase11A.ChecksPassed}");
+
+        Console.WriteLine(
+            $"Phase 11A checks failed: {phase11A.ChecksFailed}");
+
+        Console.WriteLine(
+            $"Phase 11A result: {phase11A.Message}");
+
+        if (!phase11A.Passed)
+            return 6;
+
+        return RunPhase16AVisualAnalysis();
+    }
+
+    private static int RunPhase16AVisualAnalysis()
+    {
+        Console.WriteLine();
+        Console.WriteLine(
+            "=== TEST 1 Phase 16A Real Desktop Visual Analysis ===");
+
+        Console.WriteLine(
+            "Mode: passive desktop capture");
+
+        Console.WriteLine(
+            "Input automation: disabled");
+
+        Console.WriteLine(
+            "Process memory access: disabled");
+
+        Console.WriteLine(
+            "Anti-cheat bypass: disabled");
+
+        Console.WriteLine();
+
+        try
+        {
+            using var capture = new DesktopCapture();
+
+            const int frameCount = 10;
+            const int delayMilliseconds = 100;
+
+            var totalProcessingMilliseconds = 0.0;
+            var detections = 0;
+
+            for (var frameNumber = 1;
+                 frameNumber <= frameCount;
+                 frameNumber++)
+            {
+                var frame = capture.Capture();
+
+                var analysis =
+                    VisualRegionAnalyzer.FindPurpleRegion(
+                        frame,
+                        minimumPixels: 25);
+
+                totalProcessingMilliseconds +=
+                    analysis.ProcessingMilliseconds;
+
+                if (analysis.MatchFound)
+                    detections++;
+
+                Console.WriteLine(
+                    $"Frame {frameNumber}/{frameCount}: " +
+                    $"{frame.Width}x{frame.Height}, " +
+                    $"purple pixels={analysis.MatchingPixels}, " +
+                    $"detected={analysis.MatchFound}, " +
+                    $"analysis={analysis.ProcessingMilliseconds:F2} ms");
+
+                if (analysis.Region is not null)
+                {
+                    var region = analysis.Region;
+
+                    Console.WriteLine(
+                        $"  Region: " +
+                        $"L={region.Left}, " +
+                        $"T={region.Top}, " +
+                        $"R={region.Right}, " +
+                        $"B={region.Bottom}, " +
+                        $"center=({region.CenterX},{region.CenterY}), " +
+                        $"size={region.Width}x{region.Height}");
+                }
+
+                Thread.Sleep(delayMilliseconds);
+            }
+
+            var averageProcessing =
+                totalProcessingMilliseconds / frameCount;
+
+            Console.WriteLine();
+            Console.WriteLine(
+                $"Phase 16A frames processed: {frameCount}");
+
+            Console.WriteLine(
+                $"Phase 16A detections: {detections}");
+
+            Console.WriteLine(
+                $"Average analysis time: {averageProcessing:F2} ms");
+
+            Console.WriteLine(
+                "Phase 16A result: Real desktop visual analysis completed.");
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(
+                $"Phase 16A failed: {ex.GetType().Name}");
+
+            Console.Error.WriteLine(
+                ex.Message);
+
+            return 7;
+        }
+    }
+}

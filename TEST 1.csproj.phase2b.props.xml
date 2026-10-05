@@ -1,0 +1,4 @@
+<!-- Merge this PropertyGroup into the existing TEST 1.csproj. Do not replace the whole project file. -->
+<PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+  <DefineConstants>$(DefineConstants);DEBUG_MODE</DefineConstants>
+</PropertyGroup>

@@ -1,0 +1,42 @@
+using TEST_1.Diagnostics;
+using TEST_1.Protection;
+
+namespace TEST_1;
+
+internal static class Program
+{
+    private static int Main()
+    {
+        var protection = ProtectionRuntime.ValidateConfiguration("appsettings.ini");
+
+        Console.WriteLine("=== TEST 1 Phase 4 Protection ===");
+        Console.WriteLine(protection.Message);
+
+        if (!protection.Passed)
+        {
+            Console.Error.WriteLine("Protected startup refused.");
+            return 2;
+        }
+
+        var result = Phase2BDiagnostics.Run("appsettings.ini");
+
+        Console.WriteLine();
+        Console.WriteLine("=== TEST 1 Phase 2B Diagnostics ===");
+        Console.WriteLine();
+
+        Console.WriteLine(RuntimeDiagnostics.ToText(result.Runtime));
+        Console.WriteLine();
+
+        Console.WriteLine($"Runtime compatible (x64): {result.RuntimeCompatible}");
+        Console.WriteLine($"Offset profile valid: {result.OffsetProfileValid}");
+        Console.WriteLine($"Offset values checked: {result.Offsets.CheckedValues}");
+        Console.WriteLine($"Offset validation: {result.Offsets.Message}");
+        Console.WriteLine();
+
+        Console.WriteLine($"Diagnostics enabled: {result.Configuration.DiagnosticsEnabled}");
+        Console.WriteLine($"Offset validation enabled: {result.Configuration.ValidateOffsetProfile}");
+        Console.WriteLine($"Log level: {result.Configuration.LogLevel}");
+
+        return result.RuntimeCompatible && result.OffsetProfileValid ? 0 : 1;
+    }
+}
